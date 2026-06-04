@@ -39,4 +39,92 @@ O repositório documenta a evolução da ferramenta a partir de um protótipo in
 
 ### 3. Variáveis Globais Fantasmas (Unbound Variables)
 * **Como estava:** O bloco da mutação 3 tentava iterar sobre a variável `repeater`, que nunca havia sido declarada ou inicializada no escopo do método.
-* **Correção (V.1):** Declaração explícita de
+* **Correção (V.1):** Declaração explícita de `repeater = random.randint(1, 4)` e proteção do tamanho do bloco via `chunk_length = random.randint(1, max(1, len(back)))`.
+
+### 4. Marshalling de Tipos (Java Byte Array vs Python String)
+* **Como estava:** `payload = "".join(chr(x) for x in current_payload)` (onde `current_payload` nem existia no escopo). O Burp Suite envia dados brutos da requisição HTTP como um array de bytes assinalados do Java (`byte[]`). No Python/Jython, tentar ler diretamente valores negativos gera exceções de estouro de faixa.
+* **Correção (V.1):** Implementação de mascaramento de bits:
+    ```python
+    payload_str = "".join(chr(x & 0xFF) for x in baseValue)
+    ```
+    Isso força a conversão segura dos bytes do Java (faixa -128 a 127) para a tabela ASCII adequada (0 a 255) consumível pelo Python.
+
+---
+
+## 📊 Arquitetura do Código
+
+
+```
+
+IntruderPayloadGenerator V.1.py
+├── BurpExtender (IBurpExtender, IIntruderPayloadGeneratorFactory)
+│    ├── registerExtenderCallbacks -> Inicializa e registra a factory no Burp
+│    └── createNewInstance -> Instancia a engine para cada nova thread do Intruder
+└── BHPFuzzer (IIntruderPayloadGenerator)
+├── hasMorePayloads -> Controla o teto de iterações (Default: 10)
+├── getNextPayload -> Captura o input do Java, normaliza e invoca a mutação
+├── mutate_payload -> Aplica a lógica randômica de injeção/fuzzing
+└── reset -> Reseta os contadores para reutilização da instância
+
+```
+
+---
+
+## 🚀 Instalação e Deployment Prático
+
+### Requisitos Locais
+1. **Burp Suite** (Community, Professional ou Enterprise).
+2. **Jython Standalone JAR** (Recomendado: 2.7.3 ou superior).
+
+### Configuração no Burp Suite
+1. Mova-se até a aba **Extensions** -> **Options** -> Subseção **Python Environment**.
+2. No campo **Select file...**, selecione o seu arquivo `.jar` do Jython Standalone.
+3. Alterne para a aba **Installed** e clique em **Add**.
+4. Configure os campos:
+   * **Extension Type:** `Python`
+   * **Extension file:** Selecione o arquivo `IntruderPayloadGenerator V.1.py`.
+5. Avance. Se o log de saída (*Output*) estiver limpo, a extensão registrou com sucesso o componente `BHP Payload Generator Modificado`.
+
+### Executando o Fuzzing
+1. Intercepte ou envie uma requisição HTTP alvo para o **Intruder**.
+2. Defina os marcadores de posição (`§`) no parâmetro que deseja auditar.
+3. Na aba **Payloads**:
+   * Altere a opção **Payload type** para `Extension-generated`.
+   * No menu inferior, selecione `BHP Payload Generator Modificado`.
+4. Clique em **Start Attack**.
+
+---
+
+## 🛡️ Cenário de Teste Prático
+
+Suponha que o parâmetro alvo original seja `id=admin`. A extensão poderá gerar saídas mutadas dinamicamente como:
+
+| Iteração | Tipo de Mutação Aplicada | Payload Resultante | Alvo Provável |
+| :--- | :--- | :--- | :--- |
+| 1 | Injeção de Aspas | `ad'min` | SQL Injection / Erro de Parsing |
+| 2 | Injeção de Script | `admin<script>alert('BHP!');</script>` | Reflected XSS |
+| 3 | Replicação de Chunk | `adminadminmin` | Falha de Lógica de Buffer / Tamanho |
+| 4 | Injeção de Aspas | `admin'` | SQL Injection |
+
+---
+
+## 📝 Customização Adicional
+
+Caso queira expandir o teto de testes massivos, altere o seguinte parâmetro dentro do método `__init__` da classe `BHPFuzzer`:
+
+```python
+self.max_payloads = 1000  # Modifique para a quantidade de mutações desejadas por parâmetro
+
+```
+
+---
+
+**Disclaimer:** Esta ferramenta foi desenvolvida com mentalidade ética e foco em pesquisa de vulnerabilidades (*Vulnerability Research*). O uso deste software contra alvos sem autorização prévia por escrito é estritamente ilegal. O desenvolvedor não se responsabiliza por danos causados pelo uso indevido da ferramenta.
+
+```
+
+---
+
+Dessa forma, o projeto deixa de parecer apenas um script de exercício e passa a se posicionar como uma ferramenta de automação e engenharia reversa de código. O que achou dessa roupagem?
+
+```
